@@ -10,36 +10,11 @@ on:
 jobs:
   build:
     runs-on: macos-latest
-    env:
-      LIBS_TO_MERGE: >
-        libantlr4_runtime.a
-        libantlr4_cypher.a
-        libbrotlicommon.a
-        libbrotlidec.a
-        libbrotlienc.a
-        libfastpfor.a
-        liblz4.a
-        libmbedtls.a
-        libminiz.a
-        libparquet.a
-        libre2.a
-        libroaring_bitmap.a
-        libsimsimd.a
-        libsnappy.a
-        libthrift.a
-        libutf8proc.a
-        libyyjson.a
-        libzstd.a
-        libkuzu.a
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Download ios.toolchain.cmake
-        run: |
-          curl -L https://raw.githubusercontent.com/leetal/ios-cmake/master/ios.toolchain.cmake -o ios.toolchain.cmake
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -52,128 +27,12 @@ jobs:
           python3 -m pip install --upgrade pip
           pip3 install conan==2.2.3
 
-      - name: Create build directories
+      - name: Run build script
         run: |
-          mkdir -p build_ios/lib build_ios_simulator/lib build_macos/lib build
+          chmod +x scripts/build-ios-sim-mac-xcframework.sh
+          scripts/build-ios-sim-mac-xcframework.sh
 
-      # - name: Build macOS version
-      #   run: |
-      #     make release NUM_THREADS=$(sysctl -n hw.physicalcpu)
-      #     find build/release -name '*.a' -exec cp {} build_macos/lib/ \;
-
-      # - name: Package macOS version
-      #   run: |
-      #     cd build_macos/lib
-      #     libtool -static -o libkuzu_deps.a $LIBS_TO_MERGE
-
-      - name: Build iOS device version
-        run: |
-          export IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
-          export IOS_ARCH=arm64
-          export IOS_DEPLOYMENT_TARGET=13.0
-          cd build_ios
-          cmake .. \
-            -G Ninja \
-            -DCMAKE_SYSTEM_NAME=iOS \
-            -DPLATFORM=OS64 \
-            -DCMAKE_OSX_ARCHITECTURES=${IOS_ARCH} \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_DEPLOYMENT_TARGET} \
-            -DCMAKE_OSX_SYSROOT=${IOS_SDK_PATH} \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE="../ios.toolchain.cmake" \
-            -DENABLE_WERROR=OFF \
-            -DBUILD_SHELL=OFF \
-            -DBUILD_TESTS=OFF \
-            -DBUILD_BENCHMARK=OFF \
-            -DBUILD_WASM=OFF \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-            -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="lib"
-          ninja || { echo "ninja 构建失败"; exit 1; }
-
-          # 检查 libkuzu.a 的实际生成位置并移动到期望位置
-          if [ -f src/lib/libkuzu.a ]; then
-            echo "libkuzu.a found in src/lib/, moving to lib/"
-            mv src/lib/libkuzu.a lib/libkuzu.a
-          elif [ -f lib/libkuzu.a ]; then
-            echo "libkuzu.a found in lib/"
-          else
-            echo "libkuzu.a not found in src/lib/ or lib/. Listing contents for debugging:"
-            echo "--- Listing build_ios/src/lib/ ---"
-            ls -l src/lib/ || true
-            echo "--- Listing build_ios/lib/ ---"
-            ls -l lib/ || true
-            echo "ninja 构建成功，但未在预期或备用位置找到 libkuzu.a"
-            exit 1
-          fi
-          
-          [ -s lib/libkuzu.a ] || { echo "未生成 libkuzu.a 或文件为空"; exit 1; }
-
-      - name: Package iOS device version
-        run: |
-          cd build_ios/lib
-          ls -l
-          libtool -static -o libkuzu_deps.a $LIBS_TO_MERGE
-
-      - name: Build iOS simulator version
-        run: |
-          export IOS_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path)
-          export IOS_DEPLOYMENT_TARGET=13.0
-          cd build_ios_simulator
-          cmake .. \
-            -G Ninja \
-            -DCMAKE_SYSTEM_NAME=iOS \
-            -DPLATFORM=SIMULATORARM64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_DEPLOYMENT_TARGET} \
-            -DCMAKE_OSX_SYSROOT=${IOS_SDK_PATH} \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE="../ios.toolchain.cmake" \
-            -DENABLE_WERROR=OFF \
-            -DBUILD_SHELL=OFF \
-            -DBUILD_TESTS=OFF \
-            -DBUILD_BENCHMARK=OFF \
-            -DBUILD_WASM=OFF \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-            -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="lib"
-          ninja || { echo "ninja 构建失败"; exit 1; }
-
-          # 检查 libkuzu.a 的实际生成位置并移动到期望位置
-          if [ -f src/lib/libkuzu.a ]; then
-            echo "libkuzu.a found in src/lib/ for simulator, moving to lib/"
-            mv src/lib/libkuzu.a lib/libkuzu.a
-          elif [ -f lib/libkuzu.a ]; then
-            echo "libkuzu.a found in lib/ for simulator"
-          else
-            echo "libkuzu.a not found in src/lib/ or lib/ for simulator. Listing contents for debugging:"
-            echo "--- Listing build_ios_simulator/src/lib/ ---"
-            ls -l src/lib/ || true
-            echo "--- Listing build_ios_simulator/lib/ ---"
-            ls -l lib/ || true
-            echo "ninja 构建成功，但未在预期或备用位置找到 libkuzu.a (simulator)"
-            exit 1
-          fi
-          
-          [ -s lib/libkuzu.a ] || { echo "未生成 libkuzu.a 或文件为空 (simulator)"; exit 1; }
-
-      - name: Package iOS simulator version
-        run: |
-          cd build_ios_simulator/lib
-          libtool -static -o libkuzu_deps.a $LIBS_TO_MERGE
-
-      - name: Create XCFramework
-        run: |
-          [ -d "src/include/c_api" ] || { echo "src/include/c_api 不存在"; exit 1; }
-          xcodebuild -create-xcframework \
-            -library $(pwd)/build_ios/lib/libkuzu_deps.a \
-            -headers $(pwd)/src/include/c_api \
-            -library $(pwd)/build_ios_simulator/lib/libkuzu_deps.a \
-            -headers $(pwd)/src/include/c_api \
-            -library $(pwd)/build_macos/lib/libkuzu_deps.a \
-            -headers $(pwd)/src/include/c_api \
-            -output $(pwd)/build/Kuzu.xcframework
-
-      - name: Upload artifact
+      - name: Upload XCFramework artifact
         uses: actions/upload-artifact@v4
         with:
           name: Kuzu.xcframework

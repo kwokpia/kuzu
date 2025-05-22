@@ -61,6 +61,7 @@ jobs:
       - name: Package iOS device version
         run: |
           cd build_ios/lib
+          ls -l
           LIB_FILES=$(find . -name "*.a" -exec basename {} \; | sort | uniq)
           echo "Packaging: $LIB_FILES"
           libtool -static -o libkuzu_deps.a $LIB_FILES
