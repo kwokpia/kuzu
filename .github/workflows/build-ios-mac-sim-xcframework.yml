@@ -112,6 +112,7 @@ jobs:
       - name: Package iOS device version
         run: |
           cd build_ios/lib
+          ls -l
           libtool -static -o libkuzu_deps.a $LIBS_TO_MERGE
 
       - name: Build iOS simulator version
