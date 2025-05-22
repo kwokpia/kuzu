@@ -13,19 +13,19 @@ mkdir -p "${PROJECT_ROOT}/build_macos/lib"
 # 获取 CPU 核心数
 CPU_CORES=$(sysctl -n hw.ncpu)
 
-# # # 构建 macOS 版本
-# echo "构建 macOS 版本..."
-# cd "${PROJECT_ROOT}"
-# make release NUM_THREADS=$(sysctl -n hw.physicalcpu)
+# # 构建 macOS 版本
+echo "构建 macOS 版本..."
+cd "${PROJECT_ROOT}"
+make release NUM_THREADS=$(sysctl -n hw.physicalcpu)
 
-# # 移动 macOS 构建产物到指定目录
-# echo "移动 macOS 构建产物..."
-# mkdir -p "${PROJECT_ROOT}/build_macos/lib"
-# find "${PROJECT_ROOT}/build/release" -name '*.a' -exec cp {} "${PROJECT_ROOT}/build_macos/lib/" \;
+# 移动 macOS 构建产物到指定目录
+echo "移动 macOS 构建产物..."
+mkdir -p "${PROJECT_ROOT}/build_macos/lib"
+find "${PROJECT_ROOT}/build/release" -name '*.a' -exec cp {} "${PROJECT_ROOT}/build_macos/lib/" \;
 
-# # 使用 libtool 打包 macOS 版本
-# echo "打包 macOS 版本..."
-# cd "${PROJECT_ROOT}/build_macos/lib"
+# 使用 libtool 打包 macOS 版本
+echo "打包 macOS 版本..."
+cd "${PROJECT_ROOT}/build_macos/lib"
 LIBS_TO_MERGE=(
 "libantlr4_runtime.a"
 "libantlr4_cypher.a"
@@ -68,7 +68,7 @@ if [ ! -f "CMakeCache.txt" ] || [ "${PROJECT_ROOT}/CMakeLists.txt" -nt "CMakeCac
         -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_DEPLOYMENT_TARGET} \
         -DCMAKE_OSX_SYSROOT=${IOS_SDK_PATH} \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_TOOLCHAIN_FILE="${PROJECT_ROOT}/ios.toolchain.cmake" \
+        -DCMAKE_TOOLCHAIN_FILE="/Users/gl/toolchains/ios.toolchain.cmake" \
         -DENABLE_WERROR=OFF \
         -DBUILD_SHELL=OFF \
         -DBUILD_TESTS=OFF \
@@ -105,7 +105,7 @@ cmake "${PROJECT_ROOT}" \
     -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_DEPLOYMENT_TARGET} \
     -DCMAKE_OSX_SYSROOT=${IOS_SDK_PATH} \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE="${PROJECT_ROOT}/ios.toolchain.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="/Users/gl/toolchains/ios.toolchain.cmake" \
     -DENABLE_WERROR=OFF \
     -DBUILD_SHELL=OFF \
     -DBUILD_TESTS=OFF \
