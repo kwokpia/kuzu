@@ -1,6 +1,5 @@
 name: Build (iOS | SIM | Mac) Arm64 Framework
 
-# This workflow builds the Kuzu library for iOS, iOS simulator, and macOS platforms.
 on:
   push:
     branches: [master]
@@ -40,14 +39,7 @@ jobs:
 
       - name: Download ios.toolchain.cmake
         run: |
-          set -e
-          echo "下载 iOS 工具链文件..."
           curl -L https://raw.githubusercontent.com/leetal/ios-cmake/master/ios.toolchain.cmake -o ios.toolchain.cmake
-          if [ ! -f ios.toolchain.cmake ]; then
-            echo "错误：无法下载 ios.toolchain.cmake"
-            exit 1
-          fi
-          echo "工具链文件下载成功"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -56,69 +48,29 @@ jobs:
 
       - name: Install dependencies
         run: |
-          set -e
-          echo "安装构建依赖..."
           brew install cmake ninja
           python3 -m pip install --upgrade pip
           pip3 install conan==2.2.3
-          echo "依赖安装完成"
 
       - name: Create build directories
         run: |
-          set -e
-          echo "创建构建目录..."
           mkdir -p build_ios/lib build_ios_simulator/lib build_macos/lib build
-          echo "构建目录创建完成"
 
       - name: Build macOS version
         run: |
-          set -e
-          echo "开始构建 macOS 版本..."
           make release NUM_THREADS=$(sysctl -n hw.physicalcpu)
-          echo "Listing build/release directory:"
-          ls -la build/release
-          echo "Copying .a files to build_macos/lib:"
-          if ! find build/release -name '*.a' -exec cp -v {} build_macos/lib/ \; ; then
-            echo "错误：build/release 中未找到 .a 文件"
-            exit 1
-          fi
-          echo "macOS 版本构建完成"
+          find build/release -name '*.a' -exec cp {} build_macos/lib/ \;
 
       - name: Package macOS version
         run: |
-          set -e
-          echo "打包 macOS 版本..."
           cd build_macos/lib
-          echo "Current directory: $(pwd)"
-          echo "Listing directory contents:"
-          ls -la
-          echo "Merging libraries..."
-          if ! libtool -static -o libkuzu_deps.a $LIBS_TO_MERGE 2>&1 | grep -v "warning: duplicate member name"; then
-            echo "错误：libtool 合并库失败"
-            exit 1
-          fi
-          if [ ! -f libkuzu_deps.a ]; then
-            echo "错误：未生成 libkuzu_deps.a"
-            exit 1
-          fi
-          echo "Verifying merged library:"
-          ls -la libkuzu_deps.a
-          echo "macOS 版本打包完成"
+          libtool -static -o libkuzu_deps.a $LIBS_TO_MERGE
 
       - name: Build iOS device version
         run: |
-          set -e
-          echo "开始构建 iOS 设备版本..."
           export IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
-          if [ -z "$IOS_SDK_PATH" ]; then
-            echo "错误：无法获取 iOS SDK 路径"
-            exit 1
-          fi
           export IOS_ARCH=arm64
-          export IOS_PLATFORM=iPhoneOS
           export IOS_DEPLOYMENT_TARGET=13.0
-          echo "iOS SDK Path: ${IOS_SDK_PATH}"
-          echo "Building for iOS device..."
           cd build_ios
           cmake .. \
             -G Ninja \
@@ -137,50 +89,18 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="lib"
-          echo "Running ninja build..."
-          ninja -v
-          if [ ! -d "lib" ] || [ -z "$(ls -A lib/*.a 2>/dev/null)" ]; then
-            echo "错误：build_ios/lib 中未找到 .a 文件"
-            exit 1
-          fi
-          echo "Listing build output directory:"
-          ls -la lib/
-          echo "iOS 设备版本构建完成"
+          ninja -v || { echo "ninja 构建失败"; exit 1; }
+          [ -s lib/libkuzu.a ] || { echo "未生成 libkuzu.a"; exit 1; }
 
       - name: Package iOS device version
         run: |
-          set -e
-          echo "打包 iOS 设备版本..."
           cd build_ios/lib
-          echo "Current directory: $(pwd)"
-          echo "Listing directory contents:"
-          ls -la
-          echo "Merging libraries..."
-          if ! libtool -static -o libkuzu_deps.a $LIBS_TO_MERGE 2>&1 | grep -v "warning: duplicate member name"; then
-            echo "错误：libtool 合并库失败"
-            exit 1
-          fi
-          if [ ! -f libkuzu_deps.a ]; then
-            echo "错误：未生成 libkuzu_deps.a"
-            exit 1
-          fi
-          echo "Verifying merged library:"
-          ls -la libkuzu_deps.a
-          echo "iOS 设备版本打包完成"
+          libtool -static -o libkuzu_deps.a $LIBS_TO_MERGE
 
       - name: Build iOS simulator version
         run: |
-          set -e
-          echo "开始构建 iOS 模拟器版本..."
           export IOS_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path)
-          if [ -z "$IOS_SDK_PATH" ]; then
-            echo "错误：无法获取 iOS 模拟器 SDK 路径"
-            exit 1
-          fi
-          export IOS_PLATFORM=iPhoneSimulator
           export IOS_DEPLOYMENT_TARGET=13.0
-          echo "iOS Simulator SDK Path: ${IOS_SDK_PATH}"
-          echo "Building for iOS simulator..."
           cd build_ios_simulator
           cmake .. \
             -G Ninja \
@@ -198,82 +118,25 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="lib"
-          echo "Running ninja build..."
-          ninja -v
-          if [ ! -d "lib" ] || [ -z "$(ls -A lib/*.a 2>/dev/null)" ]; then
-            echo "错误：build_ios_simulator/lib 中未找到 .a 文件"
-            exit 1
-          fi
-          echo "Listing build output directory:"
-          ls -la lib/
-          echo "iOS 模拟器版本构建完成"
+          ninja -v || { echo "ninja 构建失败"; exit 1; }
+          [ -s lib/libkuzu.a ] || { echo "未生成 libkuzu.a"; exit 1; }
 
       - name: Package iOS simulator version
         run: |
-          set -e
-          echo "打包 iOS 模拟器版本..."
           cd build_ios_simulator/lib
-          echo "Current directory: $(pwd)"
-          echo "Listing directory contents:"
-          ls -la
-          echo "Merging libraries..."
-          if ! libtool -static -o libkuzu_deps.a $LIBS_TO_MERGE 2>&1 | grep -v "warning: duplicate member name"; then
-            echo "错误：libtool 合并库失败"
-            exit 1
-          fi
-          if [ ! -f libkuzu_deps.a ]; then
-            echo "错误：未生成 libkuzu_deps.a"
-            exit 1
-          fi
-          echo "Verifying merged library:"
-          ls -la libkuzu_deps.a
-          echo "iOS 模拟器版本打包完成"
-
-      - name: Verify static libraries
-        run: |
-          set -e
-          echo "验证静态库..."
-          echo "检查库文件是否存在："
-          ls -la build_ios/lib/libkuzu_deps.a
-          ls -la build_ios_simulator/lib/libkuzu_deps.a
-          ls -la build_macos/lib/libkuzu_deps.a
-          echo "检查库架构..."
-          echo "iOS 设备版本架构："
-          lipo -info build_ios/lib/libkuzu_deps.a
-          echo "iOS 模拟器版本架构："
-          lipo -info build_ios_simulator/lib/libkuzu_deps.a
-          echo "macOS 版本架构："
-          lipo -info build_macos/lib/libkuzu_deps.a
-          echo "静态库验证完成"
+          libtool -static -o libkuzu_deps.a $LIBS_TO_MERGE
 
       - name: Create XCFramework
         run: |
-          set -e
-          echo "创建 XCFramework..."
-          if [ ! -d "src/include/c_api" ]; then
-            echo "错误：头文件目录 src/include/c_api 不存在"
-            echo "当前目录内容："
-            ls -la
-            echo "src 目录内容："
-            ls -la src/ || echo "src 目录不存在"
-            exit 1
-          fi
-          echo "使用 xcodebuild 创建 XCFramework..."
+          [ -d "src/include/c_api" ] || { echo "src/include/c_api 不存在"; exit 1; }
           xcodebuild -create-xcframework \
-            -library "$(pwd)/build_ios/lib/libkuzu_deps.a" \
-            -headers "$(pwd)/src/include/c_api" \
-            -library "$(pwd)/build_ios_simulator/lib/libkuzu_deps.a" \
-            -headers "$(pwd)/src/include/c_api" \
-            -library "$(pwd)/build_macos/lib/libkuzu_deps.a" \
-            -headers "$(pwd)/src/include/c_api" \
-            -output "$(pwd)/build/Kuzu.xcframework"
-          if [ ! -d "build/Kuzu.xcframework" ]; then
-            echo "错误：未生成 Kuzu.xcframework"
-            exit 1
-          fi
-          echo "XCFramework 创建成功"
-          echo "XCFramework 内容："
-          ls -la build/Kuzu.xcframework/
+            -library $(pwd)/build_ios/lib/libkuzu_deps.a \
+            -headers $(pwd)/src/include/c_api \
+            -library $(pwd)/build_ios_simulator/lib/libkuzu_deps.a \
+            -headers $(pwd)/src/include/c_api \
+            -library $(pwd)/build_macos/lib/libkuzu_deps.a \
+            -headers $(pwd)/src/include/c_api \
+            -output $(pwd)/build/Kuzu.xcframework
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
