@@ -132,16 +132,29 @@ jobs:
           cd build_ios_simulator/lib
           libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE[@]} 2>&1 | grep -v "warning: duplicate member name"
 
+      - name: Verify static libraries
+        run: |
+          echo "Verifying static libraries..."
+          ls -la build_ios/lib/libkuzu_deps.a
+          ls -la build_ios_simulator/lib/libkuzu_deps.a
+          ls -la build_macos/lib/libkuzu_deps.a
+
+          echo "Checking library architectures..."
+          lipo -info build_ios/lib/libkuzu_deps.a
+          lipo -info build_ios_simulator/lib/libkuzu_deps.a
+          lipo -info build_macos/lib/libkuzu_deps.a
+
       - name: Create XCFramework
         run: |
+          mkdir -p build
           xcodebuild -create-xcframework \
-            -library "build_ios/lib/libkuzu_deps.a" \
-            -headers "src/include/c_api" \
-            -library "build_ios_simulator/lib/libkuzu_deps.a" \
-            -headers "src/include/c_api" \
-            -library "build_macos/lib/libkuzu_deps.a" \
-            -headers "src/include/c_api" \
-            -output "build/Kuzu.xcframework"
+            -library "$(pwd)/build_ios/lib/libkuzu_deps.a" \
+            -headers "$(pwd)/src/include/c_api" \
+            -library "$(pwd)/build_ios_simulator/lib/libkuzu_deps.a" \
+            -headers "$(pwd)/src/include/c_api" \
+            -library "$(pwd)/build_macos/lib/libkuzu_deps.a" \
+            -headers "$(pwd)/src/include/c_api" \
+            -output "$(pwd)/build/Kuzu.xcframework"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
