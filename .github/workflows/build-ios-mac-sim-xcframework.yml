@@ -56,15 +56,15 @@ jobs:
         run: |
           mkdir -p build_ios/lib build_ios_simulator/lib build_macos/lib build
 
-      - name: Build macOS version
-        run: |
-          make release NUM_THREADS=$(sysctl -n hw.physicalcpu)
-          find build/release -name '*.a' -exec cp {} build_macos/lib/ \;
+      # - name: Build macOS version
+      #   run: |
+      #     make release NUM_THREADS=$(sysctl -n hw.physicalcpu)
+      #     find build/release -name '*.a' -exec cp {} build_macos/lib/ \;
 
-      - name: Package macOS version
-        run: |
-          cd build_macos/lib
-          libtool -static -o libkuzu_deps.a $LIBS_TO_MERGE
+      # - name: Package macOS version
+      #   run: |
+      #     cd build_macos/lib
+      #     libtool -static -o libkuzu_deps.a $LIBS_TO_MERGE
 
       - name: Build iOS device version
         run: |
@@ -90,7 +90,24 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="lib"
           ninja -v || { echo "ninja 构建失败"; exit 1; }
-          [ -s lib/libkuzu.a ] || { echo "未生成 libkuzu.a"; exit 1; }
+
+          # 检查 libkuzu.a 的实际生成位置并移动到期望位置
+          if [ -f src/lib/libkuzu.a ]; then
+            echo "libkuzu.a found in src/lib/, moving to lib/"
+            mv src/lib/libkuzu.a lib/libkuzu.a
+          elif [ -f lib/libkuzu.a ]; then
+            echo "libkuzu.a found in lib/"
+          else
+            echo "libkuzu.a not found in src/lib/ or lib/. Listing contents for debugging:"
+            echo "--- Listing build_ios/src/lib/ ---"
+            ls -l src/lib/ || true
+            echo "--- Listing build_ios/lib/ ---"
+            ls -l lib/ || true
+            echo "ninja 构建成功，但未在预期或备用位置找到 libkuzu.a"
+            exit 1
+          fi
+          
+          [ -s lib/libkuzu.a ] || { echo "未生成 libkuzu.a 或文件为空"; exit 1; }
 
       - name: Package iOS device version
         run: |
@@ -119,7 +136,24 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="lib"
           ninja -v || { echo "ninja 构建失败"; exit 1; }
-          [ -s lib/libkuzu.a ] || { echo "未生成 libkuzu.a"; exit 1; }
+
+          # 检查 libkuzu.a 的实际生成位置并移动到期望位置
+          if [ -f src/lib/libkuzu.a ]; then
+            echo "libkuzu.a found in src/lib/ for simulator, moving to lib/"
+            mv src/lib/libkuzu.a lib/libkuzu.a
+          elif [ -f lib/libkuzu.a ]; then
+            echo "libkuzu.a found in lib/ for simulator"
+          else
+            echo "libkuzu.a not found in src/lib/ or lib/ for simulator. Listing contents for debugging:"
+            echo "--- Listing build_ios_simulator/src/lib/ ---"
+            ls -l src/lib/ || true
+            echo "--- Listing build_ios_simulator/lib/ ---"
+            ls -l lib/ || true
+            echo "ninja 构建成功，但未在预期或备用位置找到 libkuzu.a (simulator)"
+            exit 1
+          fi
+          
+          [ -s lib/libkuzu.a ] || { echo "未生成 libkuzu.a 或文件为空 (simulator)"; exit 1; }
 
       - name: Package iOS simulator version
         run: |
