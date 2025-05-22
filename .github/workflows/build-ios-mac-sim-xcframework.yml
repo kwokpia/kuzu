@@ -26,6 +26,11 @@ jobs:
           brew install cmake ninja
           python3 -m pip install --upgrade pip
           pip3 install conan==2.2.3
+          
+      - name: Download ios.toolchain.cmake
+        run: |
+          curl -L https://raw.githubusercontent.com/leetal/ios-cmake/master/ios.toolchain.cmake \
+            -o ios.toolchain.cmake
 
       - name: Run build script
         run: |
