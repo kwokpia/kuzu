@@ -1,0 +1,150 @@
+name: Build (iOS | SIM | Mac) Arm64 Framework
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download ios.toolchain.cmake
+        run: |
+          curl -L https://raw.githubusercontent.com/leetal/ios-cmake/master/ios.toolchain.cmake -o ios.toolchain.cmake
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          brew install cmake ninja
+          python3 -m pip install --upgrade pip
+          pip3 install conan
+
+      - name: Create build directories
+        run: |
+          mkdir -p build_ios/lib
+          mkdir -p build_ios_simulator/lib
+          mkdir -p build_macos/lib
+
+      - name: Build macOS version
+        run: |
+          make release NUM_THREADS=$(sysctl -n hw.physicalcpu)
+          find build/release -name '*.a' -exec cp {} build_macos/lib/ \;
+
+      - name: Package macOS version
+        run: |
+          cd build_macos/lib
+          LIBS_TO_MERGE=(
+            "libantlr4_runtime.a"
+            "libantlr4_cypher.a"
+            "libbrotlicommon.a"
+            "libbrotlidec.a"
+            "libbrotlienc.a"
+            "libfastpfor.a"
+            "liblz4.a"
+            "libmbedtls.a"
+            "libminiz.a"
+            "libparquet.a"
+            "libre2.a"
+            "libroaring_bitmap.a"
+            "libsimsimd.a"
+            "libsnappy.a"
+            "libthrift.a"
+            "libutf8proc.a"
+            "libyyjson.a"
+            "libzstd.a"
+            "libkuzu.a"
+          )
+          libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE[@]} 2>&1 | grep -v "warning: duplicate member name"
+
+      - name: Build iOS device version
+        run: |
+          export IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+          export IOS_ARCH=arm64
+          export IOS_PLATFORM=iPhoneOS
+          export IOS_DEPLOYMENT_TARGET=13.0
+
+          cd build_ios
+
+          cmake .. \
+            -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DPLATFORM=OS64 \
+            -DCMAKE_OSX_ARCHITECTURES=${IOS_ARCH} \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_DEPLOYMENT_TARGET} \
+            -DCMAKE_OSX_SYSROOT=${IOS_SDK_PATH} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="../ios.toolchain.cmake" \
+            -DENABLE_WERROR=OFF \
+            -DBUILD_SHELL=OFF \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_BENCHMARK=OFF \
+            -DBUILD_WASM=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="lib"
+            
+          ninja
+
+      - name: Package iOS device version
+        run: |
+          cd build_ios/lib
+          libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE[@]} 2>&1 | grep -v "warning: duplicate member name"
+
+      - name: Build iOS simulator version
+        run: |
+          export IOS_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          export IOS_PLATFORM=iPhoneSimulator
+          export IOS_DEPLOYMENT_TARGET=13.0
+
+          cd build_ios_simulator
+
+          cmake .. \
+            -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DPLATFORM=SIMULATORARM64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_DEPLOYMENT_TARGET} \
+            -DCMAKE_OSX_SYSROOT=${IOS_SDK_PATH} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="../ios.toolchain.cmake" \
+            -DENABLE_WERROR=OFF \
+            -DBUILD_SHELL=OFF \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_BENCHMARK=OFF \
+            -DBUILD_WASM=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="lib"
+            
+          ninja
+
+      - name: Package iOS simulator version
+        run: |
+          cd build_ios_simulator/lib
+          libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE[@]} 2>&1 | grep -v "warning: duplicate member name"
+
+      - name: Create XCFramework
+        run: |
+          xcodebuild -create-xcframework \
+            -library "build_ios/lib/libkuzu_deps.a" \
+            -headers "src/include/c_api" \
+            -library "build_ios_simulator/lib/libkuzu_deps.a" \
+            -headers "src/include/c_api" \
+            -library "build_macos/lib/libkuzu_deps.a" \
+            -headers "src/include/c_api" \
+            -output "build/Kuzu.xcframework"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kuzu.xcframework
+          path: build/Kuzu.xcframework
