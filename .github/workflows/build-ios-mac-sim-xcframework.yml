@@ -16,17 +16,17 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up Python
+      - name: Set up PythonPython
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
       - name: Install dependencies
         run: |
-          brew install cmake ninja
+          brew install --formula cmake ninja
           python3 -m pip install --upgrade pip
           pip3 install conan==2.2.3
-          
+
       - name: Download ios.toolchain.cmake
         run: |
           curl -L https://raw.githubusercontent.com/leetal/ios-cmake/master/ios.toolchain.cmake \
