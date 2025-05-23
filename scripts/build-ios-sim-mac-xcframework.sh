@@ -13,6 +13,9 @@ mkdir -p "${PROJECT_ROOT}/build_macos/lib"
 # 获取 CPU 核心数
 CPU_CORES=$(sysctl -n hw.ncpu)
 
+# 设置 macOS 最低部署版本
+export MACOSX_DEPLOYMENT_TARGET=13.0
+
 # 构建 macOS 版本
 echo "构建 macOS 版本..."
 cd "${PROJECT_ROOT}"
