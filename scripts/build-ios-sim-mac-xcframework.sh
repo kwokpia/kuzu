@@ -126,21 +126,73 @@ echo "打包 iOS 模拟器版本..."
 cd "${PROJECT_ROOT}/build_ios_simulator/lib"
 libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE[@]} 2>&1 | grep -v "warning: duplicate member name"
 
+# ============ 新增：创建 module.modulemap ============
+echo "创建 module.modulemap 文件..."
+
+# 创建临时的 module.modulemap 文件
+cat > "${PROJECT_ROOT}/module.modulemap" << 'EOF'
+module Kuzu {
+    umbrella header "kuzu.h"
+    header "helpers.h"
+    export *
+    link "kuzu_deps"
+}
+EOF
+
+# 为每个架构创建带有 module.modulemap 的临时目录
+echo "准备 XCFramework 目录结构..."
+
+# iOS 真机版本
+mkdir -p "${PROJECT_ROOT}/build_ios/xcf_temp"
+cp "${PROJECT_ROOT}/build_ios/lib/libkuzu_deps.a" "${PROJECT_ROOT}/build_ios/xcf_temp/"
+cp -r "${PROJECT_ROOT}/src/include/c_api" "${PROJECT_ROOT}/build_ios/xcf_temp/Headers"
+cp "${PROJECT_ROOT}/module.modulemap" "${PROJECT_ROOT}/build_ios/xcf_temp/"
+
+# iOS 模拟器版本
+mkdir -p "${PROJECT_ROOT}/build_ios_simulator/xcf_temp"
+cp "${PROJECT_ROOT}/build_ios_simulator/lib/libkuzu_deps.a" "${PROJECT_ROOT}/build_ios_simulator/xcf_temp/"
+cp -r "${PROJECT_ROOT}/src/include/c_api" "${PROJECT_ROOT}/build_ios_simulator/xcf_temp/Headers"
+cp "${PROJECT_ROOT}/module.modulemap" "${PROJECT_ROOT}/build_ios_simulator/xcf_temp/"
+
+# macOS 版本
+mkdir -p "${PROJECT_ROOT}/build_macos/xcf_temp"
+cp "${PROJECT_ROOT}/build_macos/lib/libkuzu_deps.a" "${PROJECT_ROOT}/build_macos/xcf_temp/"
+cp -r "${PROJECT_ROOT}/src/include/c_api" "${PROJECT_ROOT}/build_macos/xcf_temp/Headers"
+cp "${PROJECT_ROOT}/module.modulemap" "${PROJECT_ROOT}/build_macos/xcf_temp/"
+
 # 使用 xcodebuild 创建 XCFramework
 echo "创建 XCFramework..."
 FRAMEWORK_DIR="${PROJECT_ROOT}/build/Kuzu.xcframework"
 # rm -rf "${FRAMEWORK_DIR}"
 
 xcodebuild -create-xcframework \
-    -library "${PROJECT_ROOT}/build_ios/lib/libkuzu_deps.a" \
-    -headers "${PROJECT_ROOT}/src/include/c_api" \
-    -library "${PROJECT_ROOT}/build_ios_simulator/lib/libkuzu_deps.a" \
-    -headers "${PROJECT_ROOT}/src/include/c_api" \
-    -library "${PROJECT_ROOT}/build_macos/lib/libkuzu_deps.a" \
-    -headers "${PROJECT_ROOT}/src/include/c_api" \
+    -library "${PROJECT_ROOT}/build_ios/xcf_temp/libkuzu_deps.a" \
+    -headers "${PROJECT_ROOT}/build_ios/xcf_temp/Headers" \
+    -library "${PROJECT_ROOT}/build_ios_simulator/xcf_temp/libkuzu_deps.a" \
+    -headers "${PROJECT_ROOT}/build_ios_simulator/xcf_temp/Headers" \
+    -library "${PROJECT_ROOT}/build_macos/xcf_temp/libkuzu_deps.a" \
+    -headers "${PROJECT_ROOT}/build_macos/xcf_temp/Headers" \
     -output "${FRAMEWORK_DIR}"
 
+# 手动复制 module.modulemap 到 XCFramework 的各个架构目录
+echo "复制 module.modulemap 到 XCFramework..."
+find "${FRAMEWORK_DIR}" -type d -name "ios-*" -o -name "macos-*" | while read arch_dir; do
+    cp "${PROJECT_ROOT}/module.modulemap" "${arch_dir}/"
+    echo "已复制 module.modulemap 到: ${arch_dir}"
+done
+
+# 清理临时文件
+echo "清理临时文件..."
+rm -f "${PROJECT_ROOT}/module.modulemap"
+rm -rf "${PROJECT_ROOT}/build_ios/xcf_temp"
+rm -rf "${PROJECT_ROOT}/build_ios_simulator/xcf_temp"  
+rm -rf "${PROJECT_ROOT}/build_macos/xcf_temp"
+
 echo "✅ XCFramework 创建完成：${FRAMEWORK_DIR}"
+
+# 验证 module.modulemap 是否正确添加
+echo "验证 module.modulemap..."
+find "${FRAMEWORK_DIR}" -name "module.modulemap" -exec echo "找到 module.modulemap: {}" \; -exec cat {} \;
 
 # 列出生成的静态库
 echo "macOS 版本静态库列表："
