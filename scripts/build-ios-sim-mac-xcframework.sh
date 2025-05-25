@@ -13,13 +13,20 @@ mkdir -p "${PROJECT_ROOT}/build_macos/lib"
 # 获取 CPU 核心数
 CPU_CORES=$(sysctl -n hw.ncpu)
 
+# # 设置 macOS 最低部署版本
+# export MACOSX_DEPLOYMENT_TARGET=13.0
+
+# # 构建 macOS 版本
+# echo "构建 macOS 版本..."
+# cd "${PROJECT_ROOT}"
+# make release NUM_THREADS=$(sysctl -n hw.physicalcpu) CXXFLAGS="-mmacosx-version-min=13.0"
 # 设置 macOS 最低部署版本
 export MACOSX_DEPLOYMENT_TARGET=13.0
 
 # 构建 macOS 版本
 echo "构建 macOS 版本..."
 cd "${PROJECT_ROOT}"
-make release NUM_THREADS=$(sysctl -n hw.physicalcpu)
+make release NUM_THREADS=$(sysctl -n hw.physicalcpu) MACOSX_DEPLOYMENT_TARGET=13.0 CXXFLAGS="-mmacosx-version-min=13.0" LDFLAGS="-mmacosx-version-min=13.0"
 
 # 移动 macOS 构建产物到指定目录
 echo "移动 macOS 构建产物..."
