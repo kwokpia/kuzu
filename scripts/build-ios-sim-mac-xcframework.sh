@@ -5,6 +5,58 @@ set -e
 # 获取项目根目录的绝对路径
 PROJECT_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
+# ========== 环境配置 ==========
+# 工具链路径配置 - 支持CI/CD和本地环境
+if [ -n "${CI_TOOLCHAIN_PATH}" ]; then
+    # CI/CD 环境使用环境变量
+    IOS_TOOLCHAIN_PATH="${CI_TOOLCHAIN_PATH}"
+    echo "🤖 CI/CD 环境检测到，使用工具链: ${IOS_TOOLCHAIN_PATH}"
+elif [ -f "/Users/gl/toolchains/ios.toolchain.cmake" ]; then
+    # 本地环境
+    IOS_TOOLCHAIN_PATH="/Users/gl/toolchains/ios.toolchain.cmake"
+    echo "🏠 本地环境检测到，使用工具链: ${IOS_TOOLCHAIN_PATH}"
+elif [ -f "${PROJECT_ROOT}/ios.toolchain.cmake" ]; then
+    # 项目根目录工具链
+    IOS_TOOLCHAIN_PATH="${PROJECT_ROOT}/ios.toolchain.cmake"
+    echo "📁 项目工具链检测到，使用工具链: ${IOS_TOOLCHAIN_PATH}"
+else
+    echo "❌ 错误：未找到iOS工具链文件"
+    echo "请设置环境变量 CI_TOOLCHAIN_PATH 或确保工具链文件存在"
+    exit 1
+fi
+
+# ========== 扩展构建目录管理 ==========
+echo "🧹 清理扩展构建缓存，避免平台混合..."
+# 清理所有扩展的构建目录，避免不同平台的对象文件混合
+find "${PROJECT_ROOT}/extension" -name "build" -type d -exec rm -rf {} + 2>/dev/null || true
+
+# 确保扩展构建目录在每个平台构建时都是干净的
+clean_extension_builds() {
+    local platform_suffix="$1"
+    echo "为$platform_suffix平台清理扩展构建..."
+    
+    for ext_dir in "${PROJECT_ROOT}/extension"/*; do
+        if [ -d "$ext_dir" ]; then
+            ext_name=$(basename "$ext_dir")
+            # 为每个平台创建独立的扩展构建目录
+            if [ -d "${ext_dir}/build" ]; then
+                rm -rf "${ext_dir}/build"
+            fi
+        fi
+    done
+}
+
+# ========== 扩展配置检查 ==========
+# 检查扩展配置
+echo "检查扩展配置..."
+if grep -q "^add_static_link_extension" "${PROJECT_ROOT}/extension/extension_config.cmake"; then
+    echo "✅ 扩展已启用，将编译所有插件"
+    EXTENSIONS_ENABLED=true
+else
+    echo "⚠️  扩展未启用，只编译基础功能"
+    EXTENSIONS_ENABLED=false
+fi
+
 # 创建构建目录（如果不存在）
 mkdir -p "${PROJECT_ROOT}/build_ios/lib"
 mkdir -p "${PROJECT_ROOT}/build_ios_simulator/lib"
@@ -13,18 +65,13 @@ mkdir -p "${PROJECT_ROOT}/build_macos/lib"
 # 获取 CPU 核心数
 CPU_CORES=$(sysctl -n hw.ncpu)
 
-# # 设置 macOS 最低部署版本
-# export MACOSX_DEPLOYMENT_TARGET=13.0
-
-# # 构建 macOS 版本
-# echo "构建 macOS 版本..."
-# cd "${PROJECT_ROOT}"
-# make release NUM_THREADS=$(sysctl -n hw.physicalcpu) CXXFLAGS="-mmacosx-version-min=13.0"
 # 设置 macOS 最低部署版本
 export MACOSX_DEPLOYMENT_TARGET=13.0
 
-# 构建 macOS 版本
+# ========== macOS 构建 ==========
 echo "构建 macOS 版本..."
+clean_extension_builds "macOS"
+
 cd "${PROJECT_ROOT}"
 make release NUM_THREADS=$(sysctl -n hw.physicalcpu) MACOSX_DEPLOYMENT_TARGET=13.0 CXXFLAGS="-mmacosx-version-min=13.0" LDFLAGS="-mmacosx-version-min=13.0"
 
@@ -36,6 +83,8 @@ find "${PROJECT_ROOT}/build/release" -name '*.a' -exec cp {} "${PROJECT_ROOT}/bu
 # 使用 libtool 打包 macOS 版本
 echo "打包 macOS 版本..."
 cd "${PROJECT_ROOT}/build_macos/lib"
+
+# 基础库文件
 LIBS_TO_MERGE=(
 "libantlr4_runtime.a"
 "libantlr4_cypher.a"
@@ -57,28 +106,62 @@ LIBS_TO_MERGE=(
 "libzstd.a"
 "libkuzu.a"
 )
+
+# 扩展库文件（如果存在则添加）
+EXTENSION_LIBS=(
+"libkuzu_algo_static_extension.a"
+"libkuzu_delta_static_extension.a"
+"libkuzu_duckdb_static_extension.a"
+"libkuzu_fts_static_extension.a"
+"libkuzu_httpfs_static_extension.a"
+"libkuzu_iceberg_static_extension.a"
+"libkuzu_json_static_extension.a"
+"libkuzu_neo4j_static_extension.a"
+"libkuzu_postgres_static_extension.a"
+"libkuzu_sqlite_static_extension.a"
+"libkuzu_unity_catalog_static_extension.a"
+"libkuzu_vector_static_extension.a"
+)
+
+# 检查扩展库是否存在并添加到合并列表
+echo "检查可用的扩展库..."
+for ext_lib in "${EXTENSION_LIBS[@]}"; do
+    if [ -f "${ext_lib}" ]; then
+        echo "✅ 找到扩展库: ${ext_lib}"
+        LIBS_TO_MERGE+=("${ext_lib}")
+    else
+        echo "⚠️  未找到扩展库: ${ext_lib}"
+    fi
+done
+
+echo "将要合并的库文件总数: ${#LIBS_TO_MERGE[@]}"
 libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE[@]} 2>&1 | grep -v "warning: duplicate member name"
 
-# 构建真机版本
+# ========== iOS 真机构建 ==========
 echo "构建 iOS 真机版本..."
+clean_extension_builds "iOS真机"
+
 export IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
 export IOS_ARCH=arm64
-export IOS_PLATFORM=iPhoneOS
+export IOS_PLATFORM=iPhoneOS  
 export IOS_DEPLOYMENT_TARGET=13.0
 
 cd "${PROJECT_ROOT}/build_ios"
 
 # 只在第一次或 CMakeLists.txt 变化时重新配置
 if [ ! -f "CMakeCache.txt" ] || [ "${PROJECT_ROOT}/CMakeLists.txt" -nt "CMakeCache.txt" ]; then
+    # 清理旧的构建缓存以避免工具链冲突
+    rm -f CMakeCache.txt
+    
     cmake "${PROJECT_ROOT}" \
         -G Ninja \
         -DCMAKE_SYSTEM_NAME=iOS \
-        -DPLATFORM=OS \
+        -DPLATFORM=OS64 \
         -DCMAKE_OSX_ARCHITECTURES=${IOS_ARCH} \
         -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_DEPLOYMENT_TARGET} \
         -DCMAKE_OSX_SYSROOT=${IOS_SDK_PATH} \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_TOOLCHAIN_FILE="${PROJECT_ROOT}/ios.toolchain.cmake" \
+        -DCMAKE_TOOLCHAIN_FILE="${IOS_TOOLCHAIN_PATH}" \
         -DENABLE_WERROR=OFF \
         -DBUILD_SHELL=OFF \
         -DBUILD_TESTS=OFF \
@@ -94,10 +177,22 @@ ninja -j${CPU_CORES}
 # 使用 libtool 打包真机版本
 echo "打包 iOS 真机版本..."
 cd "${PROJECT_ROOT}/build_ios/lib"
-libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE[@]} 2>&1 | grep -v "warning: duplicate member name"
 
-# 构建模拟器版本
+# 重新检查真机版本的扩展库
+LIBS_TO_MERGE_IOS=()
+for lib in "${LIBS_TO_MERGE[@]}"; do
+    if [ -f "${lib}" ]; then
+        LIBS_TO_MERGE_IOS+=("${lib}")
+    fi
+done
+
+echo "iOS真机版本将要合并的库文件总数: ${#LIBS_TO_MERGE_IOS[@]}"
+libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE_IOS[@]} 2>&1 | grep -v "warning: duplicate member name"
+
+# ========== iOS 模拟器构建 ==========
 echo "构建 iOS 模拟器版本..."
+clean_extension_builds "iOS模拟器"
+
 export IOS_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path)
 export IOS_PLATFORM=iPhoneSimulator
 export IOS_DEPLOYMENT_TARGET=13.0
@@ -107,6 +202,8 @@ echo "目标平台: ${IOS_PLATFORM}"
 
 cd "${PROJECT_ROOT}/build_ios_simulator"
 
+# 清理旧的构建缓存以避免工具链冲突
+rm -f CMakeCache.txt
 
 cmake "${PROJECT_ROOT}" \
     -G Ninja \
@@ -115,7 +212,7 @@ cmake "${PROJECT_ROOT}" \
     -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_DEPLOYMENT_TARGET} \
     -DCMAKE_OSX_SYSROOT=${IOS_SDK_PATH} \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE="${PROJECT_ROOT}/ios.toolchain.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="${IOS_TOOLCHAIN_PATH}" \
     -DENABLE_WERROR=OFF \
     -DBUILD_SHELL=OFF \
     -DBUILD_TESTS=OFF \
@@ -123,20 +220,43 @@ cmake "${PROJECT_ROOT}" \
     -DBUILD_WASM=OFF \
     -DBUILD_SHARED_LIBS=OFF \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="${PROJECT_ROOT}/build_ios_simulator/lib" \
-    -DCMAKE_VERBOSE_MAKEFILE=ON
+    -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="${PROJECT_ROOT}/build_ios_simulator/lib"
 
 ninja -j${CPU_CORES}
 
 # 使用 libtool 打包模拟器版本
 echo "打包 iOS 模拟器版本..."
 cd "${PROJECT_ROOT}/build_ios_simulator/lib"
-libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE[@]} 2>&1 | grep -v "warning: duplicate member name"
 
-# ============ 新增：创建 module.modulemap ============
+# 重新检查模拟器版本的扩展库
+LIBS_TO_MERGE_SIM=()
+for lib in "${LIBS_TO_MERGE[@]}"; do
+    if [ -f "${lib}" ]; then
+        LIBS_TO_MERGE_SIM+=("${lib}")
+    fi
+done
+
+echo "iOS模拟器版本将要合并的库文件总数: ${#LIBS_TO_MERGE_SIM[@]}"
+libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE_SIM[@]} 2>&1 | grep -v "warning: duplicate member name"
+
+# ============ 修复：清理和重新创建 XCFramework ============
+echo "准备创建 XCFramework..."
+
+# 完全删除旧的 XCFramework（如果存在）
+FRAMEWORK_DIR="${PROJECT_ROOT}/build/Kuzu.xcframework"
+if [ -d "${FRAMEWORK_DIR}" ]; then
+    echo "删除现有的 XCFramework..."
+    rm -rf "${FRAMEWORK_DIR}"
+fi
+
+# 清理所有临时目录（防止之前的残留文件）
+rm -rf "${PROJECT_ROOT}/build_ios/xcf_temp"
+rm -rf "${PROJECT_ROOT}/build_ios_simulator/xcf_temp"  
+rm -rf "${PROJECT_ROOT}/build_macos/xcf_temp"
+rm -f "${PROJECT_ROOT}/module.modulemap"
+
+# 创建 module.modulemap 文件
 echo "创建 module.modulemap 文件..."
-
-# 创建临时的 module.modulemap 文件
 cat > "${PROJECT_ROOT}/module.modulemap" << 'EOF'
 module Kuzu {
     umbrella header "kuzu.h"
@@ -146,7 +266,7 @@ module Kuzu {
 }
 EOF
 
-# 为每个架构创建带有 module.modulemap 的临时目录
+# 为每个架构创建干净的临时目录
 echo "准备 XCFramework 目录结构..."
 
 # iOS 真机版本
@@ -169,9 +289,6 @@ cp "${PROJECT_ROOT}/module.modulemap" "${PROJECT_ROOT}/build_macos/xcf_temp/"
 
 # 使用 xcodebuild 创建 XCFramework
 echo "创建 XCFramework..."
-FRAMEWORK_DIR="${PROJECT_ROOT}/build/Kuzu.xcframework"
-# rm -rf "${FRAMEWORK_DIR}"
-
 xcodebuild -create-xcframework \
     -library "${PROJECT_ROOT}/build_ios/xcf_temp/libkuzu_deps.a" \
     -headers "${PROJECT_ROOT}/build_ios/xcf_temp/Headers" \
@@ -184,8 +301,12 @@ xcodebuild -create-xcframework \
 # 手动复制 module.modulemap 到 XCFramework 的各个架构目录
 echo "复制 module.modulemap 到 XCFramework..."
 find "${FRAMEWORK_DIR}" -type d -name "ios-*" -o -name "macos-*" | while read arch_dir; do
-    cp "${PROJECT_ROOT}/module.modulemap" "${arch_dir}/"
-    echo "已复制 module.modulemap 到: ${arch_dir}"
+    if [ ! -f "${arch_dir}/module.modulemap" ]; then
+        cp "${PROJECT_ROOT}/module.modulemap" "${arch_dir}/"
+        echo "已复制 module.modulemap 到: ${arch_dir}"
+    else
+        echo "module.modulemap 已存在于: ${arch_dir}"
+    fi
 done
 
 # 清理临时文件

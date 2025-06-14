@@ -5,6 +5,38 @@ set -e
 # 获取项目根目录的绝对路径
 PROJECT_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
+# ========== 新增：扩展构建目录管理 ==========
+echo "🧹 清理扩展构建缓存，避免平台混合..."
+# 清理所有扩展的构建目录，避免不同平台的对象文件混合
+find "${PROJECT_ROOT}/extension" -name "build" -type d -exec rm -rf {} + 2>/dev/null || true
+
+# 确保扩展构建目录在每个平台构建时都是干净的
+clean_extension_builds() {
+    local platform_suffix="$1"
+    echo "为$platform_suffix平台清理扩展构建..."
+    
+    for ext_dir in "${PROJECT_ROOT}/extension"/*; do
+        if [ -d "$ext_dir" ]; then
+            ext_name=$(basename "$ext_dir")
+            # 为每个平台创建独立的扩展构建目录
+            if [ -d "${ext_dir}/build" ]; then
+                rm -rf "${ext_dir}/build"
+            fi
+        fi
+    done
+}
+
+# ========== 原有检查逻辑 ==========
+# 检查扩展配置
+echo "检查扩展配置..."
+if grep -q "^add_static_link_extension" "${PROJECT_ROOT}/extension/extension_config.cmake"; then
+    echo "✅ 扩展已启用，将编译所有插件"
+    EXTENSIONS_ENABLED=true
+else
+    echo "⚠️  扩展未启用，只编译基础功能"
+    EXTENSIONS_ENABLED=false
+fi
+
 # 创建构建目录（如果不存在）
 mkdir -p "${PROJECT_ROOT}/build_ios/lib"
 mkdir -p "${PROJECT_ROOT}/build_ios_simulator/lib"
@@ -16,8 +48,10 @@ CPU_CORES=$(sysctl -n hw.ncpu)
 # 设置 macOS 最低部署版本
 export MACOSX_DEPLOYMENT_TARGET=13.0
 
-# 构建 macOS 版本
+# ========== macOS 构建 ==========
 echo "构建 macOS 版本..."
+clean_extension_builds "macOS"
+
 cd "${PROJECT_ROOT}"
 make release NUM_THREADS=$(sysctl -n hw.physicalcpu) MACOSX_DEPLOYMENT_TARGET=13.0 CXXFLAGS="-mmacosx-version-min=13.0" LDFLAGS="-mmacosx-version-min=13.0"
 
@@ -29,6 +63,8 @@ find "${PROJECT_ROOT}/build/release" -name '*.a' -exec cp {} "${PROJECT_ROOT}/bu
 # 使用 libtool 打包 macOS 版本
 echo "打包 macOS 版本..."
 cd "${PROJECT_ROOT}/build_macos/lib"
+
+# 基础库文件
 LIBS_TO_MERGE=(
 "libantlr4_runtime.a"
 "libantlr4_cypher.a"
@@ -50,23 +86,57 @@ LIBS_TO_MERGE=(
 "libzstd.a"
 "libkuzu.a"
 )
+
+# 扩展库文件（如果存在则添加）
+EXTENSION_LIBS=(
+"libkuzu_algo_static_extension.a"
+"libkuzu_delta_static_extension.a"
+"libkuzu_duckdb_static_extension.a"
+"libkuzu_fts_static_extension.a"
+"libkuzu_httpfs_static_extension.a"
+"libkuzu_iceberg_static_extension.a"
+"libkuzu_json_static_extension.a"
+"libkuzu_neo4j_static_extension.a"
+"libkuzu_postgres_static_extension.a"
+"libkuzu_sqlite_static_extension.a"
+"libkuzu_unity_catalog_static_extension.a"
+"libkuzu_vector_static_extension.a"
+)
+
+# 检查扩展库是否存在并添加到合并列表
+echo "检查可用的扩展库..."
+for ext_lib in "${EXTENSION_LIBS[@]}"; do
+    if [ -f "${ext_lib}" ]; then
+        echo "✅ 找到扩展库: ${ext_lib}"
+        LIBS_TO_MERGE+=("${ext_lib}")
+    else
+        echo "⚠️  未找到扩展库: ${ext_lib}"
+    fi
+done
+
+echo "将要合并的库文件总数: ${#LIBS_TO_MERGE[@]}"
 libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE[@]} 2>&1 | grep -v "warning: duplicate member name"
 
-# 构建真机版本
+# ========== iOS 真机构建 ==========
 echo "构建 iOS 真机版本..."
+clean_extension_builds "iOS真机"
+
 export IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
 export IOS_ARCH=arm64
-export IOS_PLATFORM=iPhoneOS
+export IOS_PLATFORM=iPhoneOS  
 export IOS_DEPLOYMENT_TARGET=13.0
 
 cd "${PROJECT_ROOT}/build_ios"
 
 # 只在第一次或 CMakeLists.txt 变化时重新配置
 if [ ! -f "CMakeCache.txt" ] || [ "${PROJECT_ROOT}/CMakeLists.txt" -nt "CMakeCache.txt" ]; then
+    # 清理旧的构建缓存以避免工具链冲突
+    rm -f CMakeCache.txt
+    
     cmake "${PROJECT_ROOT}" \
         -G Ninja \
         -DCMAKE_SYSTEM_NAME=iOS \
-        -DPLATFORM=OS \
+        -DPLATFORM=OS64 \
         -DCMAKE_OSX_ARCHITECTURES=${IOS_ARCH} \
         -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_DEPLOYMENT_TARGET} \
         -DCMAKE_OSX_SYSROOT=${IOS_SDK_PATH} \
@@ -87,10 +157,23 @@ ninja -j${CPU_CORES}
 # 使用 libtool 打包真机版本
 echo "打包 iOS 真机版本..."
 cd "${PROJECT_ROOT}/build_ios/lib"
-libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE[@]} 2>&1 | grep -v "warning: duplicate member name"
 
-# 构建模拟器版本
+# 重新检查真机版本的扩展库
+LIBS_TO_MERGE_IOS=("${LIBS_TO_MERGE[@]}")
+LIBS_TO_MERGE_IOS=()
+for lib in "${LIBS_TO_MERGE[@]}"; do
+    if [ -f "${lib}" ]; then
+        LIBS_TO_MERGE_IOS+=("${lib}")
+    fi
+done
+
+echo "iOS真机版本将要合并的库文件总数: ${#LIBS_TO_MERGE_IOS[@]}"
+libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE_IOS[@]} 2>&1 | grep -v "warning: duplicate member name"
+
+# ========== iOS 模拟器构建 ==========
 echo "构建 iOS 模拟器版本..."
+clean_extension_builds "iOS模拟器"
+
 export IOS_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path)
 export IOS_PLATFORM=iPhoneSimulator
 export IOS_DEPLOYMENT_TARGET=13.0
@@ -99,6 +182,9 @@ echo "模拟器 SDK 路径: ${IOS_SDK_PATH}"
 echo "目标平台: ${IOS_PLATFORM}"
 
 cd "${PROJECT_ROOT}/build_ios_simulator"
+
+# 清理旧的构建缓存以避免工具链冲突
+rm -f CMakeCache.txt
 
 cmake "${PROJECT_ROOT}" \
     -G Ninja \
@@ -115,15 +201,24 @@ cmake "${PROJECT_ROOT}" \
     -DBUILD_WASM=OFF \
     -DBUILD_SHARED_LIBS=OFF \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="${PROJECT_ROOT}/build_ios_simulator/lib" \
-    -DCMAKE_VERBOSE_MAKEFILE=ON
+    -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="${PROJECT_ROOT}/build_ios_simulator/lib"
 
 ninja -j${CPU_CORES}
 
 # 使用 libtool 打包模拟器版本
 echo "打包 iOS 模拟器版本..."
 cd "${PROJECT_ROOT}/build_ios_simulator/lib"
-libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE[@]} 2>&1 | grep -v "warning: duplicate member name"
+
+# 重新检查模拟器版本的扩展库
+LIBS_TO_MERGE_SIM=()
+for lib in "${LIBS_TO_MERGE[@]}"; do
+    if [ -f "${lib}" ]; then
+        LIBS_TO_MERGE_SIM+=("${lib}")
+    fi
+done
+
+echo "iOS模拟器版本将要合并的库文件总数: ${#LIBS_TO_MERGE_SIM[@]}"
+libtool -static -o libkuzu_deps.a ${LIBS_TO_MERGE_SIM[@]} 2>&1 | grep -v "warning: duplicate member name"
 
 # ============ 修复：清理和重新创建 XCFramework ============
 echo "准备创建 XCFramework..."
